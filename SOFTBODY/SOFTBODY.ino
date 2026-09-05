@@ -9,14 +9,13 @@ static const float WORLD_WIDTH  = 800.0f;
 static const float WORLD_HEIGHT = 600.0f;
 static const float BASE_DT = 0.016f;
 
-// Физические параметры
 float GRAVITY = 550.0f;
 float DRAG = 0.992f;
 float BOUNCE = 0.55f;
 int SOLVER_ITERATIONS = 4;
 float body_radius = 55.0f;
 float target_area = 0.0f;
-float PRESSURE_K = 0.75f; // Диапазон от 0.0 (сдутый блин) до 1.0 (надутый мяч)
+float PRESSURE_K = 0.75f;
 
 float time_scale = 1.0f;
 float current_dt = BASE_DT;
@@ -44,9 +43,18 @@ struct Segment {
     bool is_trampoline;
 };
 
+struct Fan {
+    float x, y, w, h;
+    float fx, fy;
+};
+
+struct Vortex {
+    float x, y;
+    float strength;
+};
+
 Point points[TOTAL_POINTS];
 
-// Только внешний контур (резиновая оболочка)
 static const int MAX_SPRINGS = NUM_RING_POINTS;
 Spring springs[MAX_SPRINGS];
 int spring_count = 0;
@@ -59,6 +67,14 @@ static const int MAX_SEGMENTS = 16;
 Segment segments[MAX_SEGMENTS];
 int segment_count = 0;
 
+static const int MAX_FANS = 4;
+Fan fans[MAX_FANS];
+int fan_count = 0;
+
+static const int MAX_VORTICES = 4;
+Vortex vortices[MAX_VORTICES];
+int vortex_count = 0;
+
 float ext_fx = 0.0f;
 float ext_fy = 0.0f;
 bool is_dragging = false;
@@ -70,7 +86,6 @@ int rx_idx = 0;
 
 void init_soft_body(float cx, float cy, float radius) {
     body_radius = radius;
-    // Точная площадь правильного 16-угольника в состоянии покоя
     target_area = 0.5f * NUM_RING_POINTS * radius * radius * std::sin(2.0f * (float)M_PI / NUM_RING_POINTS);
 
     for (int i = 0; i < NUM_RING_POINTS; i++) {
@@ -81,7 +96,6 @@ void init_soft_body(float cx, float cy, float radius) {
     }
     points[CENTER_IDX] = { cx, cy, cx, cy };
 
-    // Создаем ТОЛЬКО периметр оболочки (без внутренних спиц!)
     spring_count = 0;
     for (int i = 0; i < NUM_RING_POINTS; i++) {
         int next = (i + 1) % NUM_RING_POINTS;
@@ -124,6 +138,8 @@ void process_serial_input() {
                 else if (rx_buf[0] == 'X') {
                     obstacle_count = 0;
                     segment_count = 0;
+                    fan_count = 0;
+                    vortex_count = 0;
                 }
                 else if (rx_buf[0] == '+' && rx_buf[1] == 'O') {
                     float ox, oy, orad;
@@ -138,6 +154,18 @@ void process_serial_input() {
                         if (segment_count < MAX_SEGMENTS) {
                             segments[segment_count++] = { x1, y1, x2, y2, th, tramp == 1 };
                         }
+                    }
+                }
+                else if (rx_buf[0] == '+' && rx_buf[1] == 'F') {
+                    float fx, fy, fw, fh, f_force_x, f_force_y;
+                    if (sscanf(rx_buf, "+F %f %f %f %f %f %f", &fx, &fy, &fw, &fh, &f_force_x, &f_force_y) == 6) {
+                        if (fan_count < MAX_FANS) fans[fan_count++] = { fx, fy, fw, fh, f_force_x, f_force_y };
+                    }
+                }
+                else if (rx_buf[0] == '+' && rx_buf[1] == 'V') {
+                    float vx, vy, vstr;
+                    if (sscanf(rx_buf, "+V %f %f %f", &vx, &vy, &vstr) == 3) {
+                        if (vortex_count < MAX_VORTICES) vortices[vortex_count++] = { vx, vy, vstr };
                     }
                 }
                 else if (rx_buf[0] == 'P') {
@@ -176,7 +204,6 @@ void verlet_integrate() {
     float time_ratio = (prev_dt > 1e-5f) ? (current_dt / prev_dt) : 1.0f;
     prev_dt = current_dt;
 
-    // Вычисляем виртуальный центр тела
     float cx = 0, cy = 0;
     for (int i = 0; i < NUM_RING_POINTS; i++) {
         cx += points[i].x;
@@ -185,7 +212,6 @@ void verlet_integrate() {
     cx /= NUM_RING_POINTS;
     cy /= NUM_RING_POINTS;
 
-    // Захват мышью плавно переносит всю оболочку целиком
     if (is_dragging) {
         float pull = 0.25f * time_scale;
         float shift_x = (drag_target_x - cx) * pull;
@@ -196,6 +222,8 @@ void verlet_integrate() {
         }
     }
 
+    float dt_sq = current_dt * current_dt;
+
     for (int i = 0; i < NUM_RING_POINTS; i++) {
         float vx = (points[i].x - points[i].old_x) * time_ratio * DRAG;
         float vy = (points[i].y - points[i].old_y) * time_ratio * DRAG;
@@ -203,14 +231,48 @@ void verlet_integrate() {
         points[i].old_x = points[i].x;
         points[i].old_y = points[i].y;
 
-        points[i].x += vx + ext_fx * current_dt * current_dt;
-        points[i].y += vy + (GRAVITY + ext_fy) * current_dt * current_dt;
+        // Вентилятор: аэродинамический подъем + центрирование в потоке
+        float fan_ax = 0.0f, fan_ay = 0.0f;
+        for (int f = 0; f < fan_count; f++) {
+            if (points[i].x >= fans[f].x && points[i].x <= fans[f].x + fans[f].w &&
+                points[i].y >= fans[f].y && points[i].y <= fans[f].y + fans[f].h) {
+                // Центрирование к середине струи
+                float fan_center_x = fans[f].x + fans[f].w * 0.5f;
+                fan_ax += (fan_center_x - points[i].x) * 12.0f;
+                // Мощный восходящий поток
+                fan_ay += fans[f].fy;
+            }
+        }
+
+        // Черная дыра: мощная гравитация + вихревое вращение
+        float vortex_ax = 0.0f, vortex_ay = 0.0f;
+        for (int v = 0; v < vortex_count; v++) {
+            float dx = vortices[v].x - points[i].x;
+            float dy = vortices[v].y - points[i].y;
+            float dist = std::sqrt(dx * dx + dy * dy);
+            if (dist > 10.0f && dist < 380.0f) {
+                // Линейно-обратный закон тяги, превосходящий гравитацию в разы
+                float pull = vortices[v].strength * (1.0f - dist / 380.0f) * 4200.0f;
+                float nx = dx / dist;
+                float ny = dy / dist;
+                float swirl = pull * 0.75f;
+                vortex_ax += nx * pull - ny * swirl;
+                vortex_ay += ny * pull + nx * swirl;
+            }
+        }
+
+        points[i].x += vx + (ext_fx + fan_ax + vortex_ax) * dt_sq;
+        points[i].y += vy + (GRAVITY + ext_fy + fan_ay + vortex_ay) * dt_sq;
     }
 }
 
 void solve_constraints() {
+    bool tramp_hit = false;
+    float tramp_launch_nx = 0.0f;
+    float tramp_launch_ny = 0.0f;
+
     for (int iter = 0; iter < SOLVER_ITERATIONS; iter++) {
-        // 1. Упругие связи резиновой оболочки
+        // 1. Оболочка (пружины)
         for (int i = 0; i < spring_count; i++) {
             Point &p1 = points[springs[i].p1];
             Point &p2 = points[springs[i].p2];
@@ -228,16 +290,15 @@ void solve_constraints() {
             p2.x -= off_x; p2.y -= off_y;
         }
 
-        // 2. Истинное газовое давление (PBD Area Conservation Constraint)
+        // 2. Газовое давление (PBD Area Constraint)
         if (PRESSURE_K > 0.001f) {
             float cur_area = 0.0f;
             for (int i = 0; i < NUM_RING_POINTS; i++) {
                 int next = (i + 1) % NUM_RING_POINTS;
                 cur_area += points[i].x * points[next].y - points[next].x * points[i].y;
             }
-            cur_area = 0.5f * cur_area; // со знаком
+            cur_area = 0.5f * cur_area;
 
-            // Векторы градиента площади для каждой вершины
             float gx[NUM_RING_POINTS];
             float gy[NUM_RING_POINTS];
             float sum_grad_sq = 0.0f;
@@ -245,18 +306,14 @@ void solve_constraints() {
             for (int i = 0; i < NUM_RING_POINTS; i++) {
                 int prev = (i - 1 + NUM_RING_POINTS) % NUM_RING_POINTS;
                 int next = (i + 1) % NUM_RING_POINTS;
-                // dArea / dx_i = 0.5 * (y_{next} - y_{prev})
-                // dArea / dy_i = 0.5 * (x_{prev} - x_{next})
                 gx[i] = 0.5f * (points[next].y - points[prev].y);
                 gy[i] = 0.5f * (points[prev].x - points[next].x);
                 sum_grad_sq += gx[i] * gx[i] + gy[i] * gy[i];
             }
 
             if (sum_grad_sq > 1e-4f) {
-                // Множитель Лагранжа
                 float lambda = (target_area - cur_area) / sum_grad_sq;
                 float force = lambda * PRESSURE_K;
-
                 for (int i = 0; i < NUM_RING_POINTS; i++) {
                     points[i].x += gx[i] * force;
                     points[i].y += gy[i] * force;
@@ -303,25 +360,30 @@ void solve_constraints() {
                 if (dist_sq < min_d * min_d) {
                     float dist = std::sqrt(dist_sq);
                     if (dist < 1e-4f) { dist = 1e-4f; dx = 0; dy = -1.0f; }
+
+                    // Строгая внешняя нормаль для батута (всегда направлена наружу/вверх)
                     float nx = dx / dist;
                     float ny = dy / dist;
-                    float overlap = min_d - dist;
 
+                    if (segments[s].is_trampoline) {
+                        float slen = std::sqrt(seg_len_sq);
+                        float up_nx = sy / slen;
+                        float up_ny = -sx / slen;
+                        if (up_ny > 0.0f) { up_nx = -up_nx; up_ny = -up_ny; }
+                        tramp_launch_nx = up_nx;
+                        tramp_launch_ny = up_ny;
+                        tramp_hit = true;
+                    }
+
+                    float overlap = min_d - dist;
                     points[i].x += nx * overlap;
                     points[i].y += ny * overlap;
 
-                    // Расчет скорости точки
                     float vx = points[i].x - points[i].old_x;
                     float vy = points[i].y - points[i].old_y;
                     float vn = vx * nx + vy * ny;
 
-                    if (segments[s].is_trampoline) {
-                        // Катапультирующий импульс батута
-                        float launch_speed = (vn < 0.0f) ? (-vn * 2.2f + 14.0f) : 15.0f;
-                        points[i].old_x = points[i].x - (vx - vn * nx + nx * launch_speed);
-                        points[i].old_y = points[i].y - (vy - vn * ny + ny * launch_speed);
-                    } else if (vn < 0.0f) {
-                        // Обычный отскок от стены
+                    if (!segments[s].is_trampoline && vn < 0.0f) {
                         points[i].old_x = points[i].x - (vx - (1.0f + BOUNCE) * vn * nx);
                         points[i].old_y = points[i].y - (vy - (1.0f + BOUNCE) * vn * ny);
                     }
@@ -330,7 +392,23 @@ void solve_constraints() {
         }
     }
 
-    // 5. Границы мира + трение
+    // МОЩНЫЙ КАТАПУЛЬТИРУЮЩИЙ ИМПУЛЬС БАТУТА ДЛЯ ВСЕГО ШАРА
+    if (tramp_hit) {
+        const float LAUNCH_SPEED = 26.0f; // Взрывной катапультирующий импульс
+        for (int j = 0; j < NUM_RING_POINTS; j++) {
+            float vx = points[j].x - points[j].old_x;
+            float vy = points[j].y - points[j].old_y;
+            float vn = vx * tramp_launch_nx + vy * tramp_launch_ny;
+
+            if (vn < LAUNCH_SPEED) {
+                // Выравниваем вектор скорости всего тела вдоль нормали батута
+                points[j].old_x = points[j].x - (vx - vn * tramp_launch_nx + tramp_launch_nx * LAUNCH_SPEED);
+                points[j].old_y = points[j].y - (vy - vn * tramp_launch_ny + tramp_launch_ny * LAUNCH_SPEED);
+            }
+        }
+    }
+
+    // 5. Границы мира
     for (int i = 0; i < NUM_RING_POINTS; i++) {
         if (points[i].x < 20.0f) {
             float vx = points[i].x - points[i].old_x;
@@ -355,7 +433,7 @@ void solve_constraints() {
         }
     }
 
-    // 6. Обновляем центр масс для отправки на ПК
+    // 6. Центр масс
     float cx = 0, cy = 0;
     for (int i = 0; i < NUM_RING_POINTS; i++) {
         cx += points[i].x;
@@ -367,7 +445,7 @@ void solve_constraints() {
 
 void setup() {
     Serial.begin(115200);
-    delay(1500);
+    delay(1000);
     init_soft_body(WORLD_WIDTH * 0.5f, 130.0f, body_radius);
 }
 
