@@ -34,7 +34,7 @@ class ParticleSystem:
     def __init__(self):
         self.particles = []
 
-    def emit(self, x, y, count=10, speed=120.0, color_override=None):
+    def emit(self, x, y, count=10, speed=140.0, color_override=None):
         for _ in range(count):
             angle = random.uniform(0, 2 * math.pi)
             spd = random.uniform(speed * 0.3, speed)
@@ -151,7 +151,7 @@ def main():
 
     pygame.init()
     screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
-    pygame.display.set_caption("RP2040 SoftBody — Skate & Trampoline Sandbox")
+    pygame.display.set_caption("RP2040 SoftBody — True Pressure & Trampolines")
     clock = pygame.time.Clock()
 
     font_s = pygame.font.SysFont("Arial", 11)
@@ -164,8 +164,6 @@ def main():
     mode = ['DRAG']
     particles = ParticleSystem()
     ghost_trail = deque(maxlen=7)
-
-    # Переменные для рисования линий
     drag_start = None
 
     def set_mode(m): mode[0] = m
@@ -185,16 +183,16 @@ def main():
 
     def spawn_skate_preset():
         clear_all()
-        # 1. Большая наклонная рампа
-        segments.append({'x1': 50.0, 'y1': 160.0, 'x2': 280.0, 'y2': 420.0, 'th': 12.0, 'tramp': False})
-        # 2. Неоновый батут-катапульта снизу
-        segments.append({'x1': 320.0, 'y1': 510.0, 'x2': 500.0, 'y2': 510.0, 'th': 14.0, 'tramp': True})
-        # 3. Приемная наклонная рампа справа
-        segments.append({'x1': 540.0, 'y1': 430.0, 'x2': 740.0, 'y2': 220.0, 'th': 12.0, 'tramp': False})
-        # 4. Несколько штырей-мишеней вверху
-        obstacles.append({'x': 410.0, 'y': 220.0, 'r': 22.0})
-        obstacles.append({'x': 340.0, 'y': 150.0, 'r': 18.0})
-        obstacles.append({'x': 480.0, 'y': 150.0, 'r': 18.0})
+        # Разгонная горка
+        segments.append({'x1': 60.0, 'y1': 160.0, 'x2': 280.0, 'y2': 440.0, 'th': 12.0, 'tramp': False})
+        # Неоновый батут-катапульта прямо под выкатом горки
+        segments.append({'x1': 290.0, 'y1': 530.0, 'x2': 510.0, 'y2': 530.0, 'th': 15.0, 'tramp': True})
+        # Вторая горка справа
+        segments.append({'x1': 540.0, 'y1': 450.0, 'x2': 740.0, 'y2': 240.0, 'th': 12.0, 'tramp': False})
+        # Штыри-мишени под потолком
+        obstacles.append({'x': 400.0, 'y': 180.0, 'r': 22.0})
+        obstacles.append({'x': 320.0, 'y': 120.0, 'r': 16.0})
+        obstacles.append({'x': 480.0, 'y': 120.0, 'r': 16.0})
         sync_all_world()
 
     def spawn_plinko_preset():
@@ -212,7 +210,6 @@ def main():
 
     ui_x = WORLD_W + 15
 
-    # Кнопки инструментов
     btn_drag   = Button((ui_x, 38, 230, 22), "[~] Захват тела (ЛКМ)", lambda: set_mode('DRAG'))
     btn_pin    = Button((ui_x, 63, 230, 22), "[+] Штырь (Круг)", lambda: set_mode('ADD_PIN'))
     btn_ramp   = Button((ui_x, 88, 230, 22), "[/] Рампа / Платформа", lambda: set_mode('ADD_RAMP'))
@@ -225,14 +222,14 @@ def main():
     slider_time     = Slider(ui_x, 185, 230, 6, 0.05, 1.5, 1.0, "Скорость времени", "%.2fx", active_color=(255, 180, 40))
     slider_body_r   = Slider(ui_x, 217, 230, 6, 25.0, 110.0, 55.0, "Размер слайма", "%.0f px")
     slider_thickness= Slider(ui_x, 249, 230, 6, 8.0, 50.0, 15.0, "Толщина / Радиус (Wheel)", "%.0f px")
-    slider_pressure = Slider(ui_x, 281, 230, 6, 0.0, 0.045, 0.018, "Давление газа", "%.3f")
-    slider_g        = Slider(ui_x, 313, 230, 6, 0.0, 1200.0, 500.0, "Гравитация", "%.0f")
-    slider_iters    = Slider(ui_x, 345, 230, 6, 1.0, 8.0, 4.0, "Жесткость связей", "%.0f")
-    slider_bounce   = Slider(ui_x, 377, 230, 6, 0.1, 0.95, 0.55, "Упругость (Bounce)", "%.2f")
+    # Давление газа: от 0.00 (тряпка) до 1.00 (упругий надувной шар)
+    slider_pressure = Slider(ui_x, 281, 230, 6, 0.0, 1.0, 0.75, "Давление газа (Объем)", "%.2f", active_color=(100, 240, 120))
+    slider_g        = Slider(ui_x, 313, 230, 6, 0.0, 1200.0, 550.0, "Гравитация", "%.0f")
+    slider_iters    = Slider(ui_x, 345, 230, 6, 1.0, 8.0, 4.0, "Жесткость оболочки", "%.0f")
+    slider_bounce   = Slider(ui_x, 377, 230, 6, 0.1, 0.95, 0.55, "Упругость стен", "%.2f")
 
     sliders = [slider_time, slider_body_r, slider_thickness, slider_pressure, slider_g, slider_iters, slider_bounce]
 
-    # Пресеты и действия
     btn_preset1 = Button((ui_x, 410, 230, 23), "[*] Пресет: Скейт-парк", spawn_skate_preset)
     btn_preset2 = Button((ui_x, 436, 230, 23), "[*] Пресет: Плинко", spawn_plinko_preset)
     btn_clear   = Button((ui_x, 462, 230, 23), "[X] Очистить все", clear_all)
@@ -241,7 +238,7 @@ def main():
     action_buttons = [btn_preset1, btn_preset2, btn_clear, btn_reset]
 
     def send_physics_params():
-        cmd = f"P {slider_g.val:.1f} {0.992:.4f} {slider_bounce.val:.2f} {int(slider_iters.val)} {slider_pressure.val:.5f}\n"
+        cmd = f"P {slider_g.val:.1f} {0.992:.4f} {slider_bounce.val:.2f} {int(slider_iters.val)} {slider_pressure.val:.3f}\n"
         ser.write(cmd.encode('ascii'))
 
     def send_body_size():
@@ -267,7 +264,6 @@ def main():
     while running:
         dt = clock.tick(60) / 1000.0
 
-        # Bullet Time через Shift
         keys = pygame.key.get_pressed()
         shift_pressed = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
         target_time = 0.20 if shift_pressed else slider_time.val
@@ -304,7 +300,6 @@ def main():
                     elif s == slider_time: pass
                     else: send_physics_params()
 
-            # Мышь на игровом поле
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mx, my = event.pos
                 if mx < WORLD_W:
@@ -314,17 +309,14 @@ def main():
                     elif mode[0] in ['ADD_RAMP', 'ADD_TRAMP']:
                         drag_start = (float(mx), float(my))
                     elif mode[0] == 'DEL':
-                        # Удаление круга
                         deleted = False
                         for obs in obstacles[:]:
                             if math.hypot(mx - obs['x'], my - obs['y']) <= obs['r'] + 6:
                                 obstacles.remove(obs)
                                 deleted = True
                                 break
-                        # Удаление отрезка
                         if not deleted:
                             for seg in segments[:]:
-                                # Расстояние до отрезка
                                 sx, sy = seg['x2'] - seg['x1'], seg['y2'] - seg['y1']
                                 seg_len_sq = sx*sx + sy*sy
                                 if seg_len_sq > 0:
@@ -342,7 +334,7 @@ def main():
                     mx, my = event.pos
                     mx = min(mx, WORLD_W - 20)
                     dist = math.hypot(mx - drag_start[0], my - drag_start[1])
-                    if dist > 15.0: # Минимальная длина отрезка
+                    if dist > 15.0:
                         is_t = (mode[0] == 'ADD_TRAMP')
                         seg_data = {
                             'x1': drag_start[0], 'y1': drag_start[1],
@@ -366,9 +358,9 @@ def main():
 
         fx = 0.0
         fy = 0.0
-        if keys[pygame.K_a] or keys[pygame.K_LEFT]:  fx -= 1300.0
-        if keys[pygame.K_d] or keys[pygame.K_RIGHT]: fx += 1300.0
-        if keys[pygame.K_w] or keys[pygame.K_UP] or keys[pygame.K_SPACE]: fy -= 2400.0
+        if keys[pygame.K_a] or keys[pygame.K_LEFT]:  fx -= 1400.0
+        if keys[pygame.K_d] or keys[pygame.K_RIGHT]: fx += 1400.0
+        if keys[pygame.K_w] or keys[pygame.K_UP] or keys[pygame.K_SPACE]: fy -= 2500.0
         if keys[pygame.K_s] or keys[pygame.K_DOWN]:  fy += 1500.0
 
         is_dragging = 1 if (m_buttons[0] and mode[0] == 'DRAG' and m_pos[0] < WORLD_W) else 0
@@ -402,25 +394,23 @@ def main():
 
         pygame.draw.rect(screen, (28, 32, 42), (20, 20, WORLD_W - 40, WORLD_H - 40), 2, border_radius=6)
 
-        # 1. Отрисовка платформ и батутов
+        # Платформы и батуты
         for seg in segments:
             p1 = (int(seg['x1']), int(seg['y1']))
             p2 = (int(seg['x2']), int(seg['y2']))
             th = int(seg['th'])
             if seg['tramp']:
-                # Неоновый батут
-                pygame.draw.line(screen, (255, 40, 160), p1, p2, th * 2)
-                pygame.draw.line(screen, (255, 200, 240), p1, p2, max(2, th // 2))
-                pygame.draw.circle(screen, (255, 40, 160), p1, th)
-                pygame.draw.circle(screen, (255, 40, 160), p2, th)
+                pygame.draw.line(screen, (255, 30, 150), p1, p2, th * 2)
+                pygame.draw.line(screen, (255, 190, 240), p1, p2, max(3, th // 2))
+                pygame.draw.circle(screen, (255, 30, 150), p1, th)
+                pygame.draw.circle(screen, (255, 30, 150), p2, th)
             else:
-                # Обычная платформа
                 pygame.draw.line(screen, (65, 78, 102), p1, p2, th * 2)
                 pygame.draw.line(screen, (110, 130, 165), p1, p2, max(2, th // 2))
                 pygame.draw.circle(screen, (65, 78, 102), p1, th)
                 pygame.draw.circle(screen, (65, 78, 102), p2, th)
 
-        # 2. Отрисовка круглых штырей
+        # Штыри
         for obs in obstacles:
             ox, oy, r = int(obs['x']), int(obs['y']), int(obs['r'])
             pygame.draw.circle(screen, (10, 12, 16), (ox + 3, oy + 3), r)
@@ -428,7 +418,7 @@ def main():
             pygame.draw.circle(screen, (115, 130, 160), (ox, oy), r - 2)
             pygame.draw.circle(screen, (185, 205, 230), (ox - r//3, oy - r//3), max(2, r//5))
 
-        # 3. Отрисовка мягкого тела
+        # Мягкое тело
         if len(current_points) == NUM_RING_POINTS + 1:
             ring = current_points[:NUM_RING_POINTS]
             center = current_points[CENTER_IDX]
@@ -436,11 +426,10 @@ def main():
             if last_center_pos is not None and dt > 0.001:
                 cur_vel = ((center[0] - last_center_pos[0])/dt, (center[1] - last_center_pos[1])/dt)
                 accel_mag = math.hypot(cur_vel[0] - prev_center_vel[0], cur_vel[1] - prev_center_vel[1])
-                if accel_mag > (3400.0 * current_sim_time):
-                    # Если ускорение вверх колоссальное — значит удар о батут!
-                    is_tramp_hit = (cur_vel[1] < -200.0)
-                    col = (255, 80, 180) if is_tramp_hit else None
-                    particles.emit(center[0], center[1], count=12 if is_tramp_hit else 8, speed=200.0 if is_tramp_hit else 140.0, color_override=col)
+                if accel_mag > (3200.0 * current_sim_time):
+                    is_tramp = (cur_vel[1] < -250.0)
+                    col = (255, 60, 180) if is_tramp else None
+                    particles.emit(center[0], center[1], count=14 if is_tramp else 8, speed=220.0 if is_tramp else 140.0, color_override=col)
                 prev_center_vel = cur_vel
             last_center_pos = center
 
@@ -458,25 +447,24 @@ def main():
                     pygame.draw.polygon(trail_surface, (0, 200, 255, alpha), trail_pts)
                 screen.blit(trail_surface, (0, 0))
 
-            for pt in ring:
-                pygame.draw.line(screen, (35, 65, 95), (int(center[0]), int(center[1])), (int(pt[0]), int(pt[1])), 1)
-
+            # Тело (заливка и контур)
             pygame.draw.polygon(screen, (35, 145, 215), smooth_body)
             pygame.draw.polygon(screen, (130, 225, 255), smooth_body, 3)
 
-            # Блик
-            highlight_pts = []
-            for i in range(len(smooth_body)//3):
-                pt = smooth_body[i]
-                hx = center[0] + (pt[0] - center[0]) * 0.75
-                hy = center[1] + (pt[1] - center[1]) * 0.75 - 4.0
-                highlight_pts.append((hx, hy))
-            if len(highlight_pts) > 2:
-                pygame.draw.polygon(screen, (180, 240, 255), highlight_pts)
+            # Блик (только если шар надут)
+            if slider_pressure.val > 0.2:
+                highlight_pts = []
+                for i in range(len(smooth_body)//3):
+                    pt = smooth_body[i]
+                    hx = center[0] + (pt[0] - center[0]) * 0.75
+                    hy = center[1] + (pt[1] - center[1]) * 0.75 - 4.0
+                    highlight_pts.append((hx, hy))
+                if len(highlight_pts) > 2:
+                    pygame.draw.polygon(screen, (180, 240, 255), highlight_pts)
 
             # Глаза
-            eye_spacing = max(6, int(slider_body_r.val * 0.22))
-            eye_r = max(4, int(slider_body_r.val * 0.12))
+            eye_spacing = max(5, int(slider_body_r.val * 0.22 * min(1.0, slider_pressure.val + 0.3)))
+            eye_r = max(3, int(slider_body_r.val * 0.12 * min(1.0, slider_pressure.val + 0.4)))
             left_eye_pos = (center[0] - eye_spacing, center[1] - 4)
             right_eye_pos = (center[0] + eye_spacing, center[1] - 4)
 
@@ -499,13 +487,11 @@ def main():
 
         particles.draw(screen)
 
-        # Превью рисуемой линии
         if drag_start is not None and m_pos[0] < WORLD_W:
-            p_color = (255, 60, 180) if mode[0] == 'ADD_TRAMP' else (100, 220, 120)
+            p_color = (255, 40, 160) if mode[0] == 'ADD_TRAMP' else (100, 220, 120)
             th_preview = max(2, int(slider_thickness.val * 0.65 * 2))
             pygame.draw.line(screen, p_color, (int(drag_start[0]), int(drag_start[1])), m_pos, th_preview)
 
-        # Индикатор курсора
         if m_pos[0] < WORLD_W:
             if mode[0] == 'ADD_PIN':
                 cur_r = int(slider_thickness.val)
@@ -515,7 +501,6 @@ def main():
                 pygame.draw.line(screen, (230, 75, 75), (m_pos[0]-6, m_pos[1]-6), (m_pos[0]+6, m_pos[1]+6), 2)
                 pygame.draw.line(screen, (230, 75, 75), (m_pos[0]+6, m_pos[1]-6), (m_pos[0]-6, m_pos[1]+6), 2)
 
-        # HUD Bullet Time
         if current_sim_time < 0.65:
             hud_txt = f"BULLET TIME: {current_sim_time:.2f}x"
             hud_surf = font_hud.render(hud_txt, True, (0, 230, 255))
@@ -526,7 +511,7 @@ def main():
         pygame.draw.line(screen, (45, 50, 65), (WORLD_W, 0), (WORLD_W, WINDOW_H), 2)
 
         screen.blit(font_title.render("КОНСТРУКТОР МИРА", True, (255, 255, 255)), (ui_x, 8))
-        screen.blit(font_s.render("RP2040 Physics Sandbox", True, (115, 135, 160)), (ui_x, 24))
+        screen.blit(font_s.render("PBD True Pressure & Trampolines", True, (115, 135, 160)), (ui_x, 24))
 
         pygame.draw.line(screen, (40, 44, 56), (ui_x, 167), (ui_x + 230, 167), 1)
         pygame.draw.line(screen, (40, 44, 56), (ui_x, 400), (ui_x + 230, 400), 1)
@@ -536,8 +521,8 @@ def main():
         for btn in action_buttons: btn.draw(screen, font_m)
 
         tips = [
-            "Рампа/Батут: тяните мышь для рисования",
-            "Зажмите SHIFT: режим Bullet Time"
+            "Давление 0.0: шар сдувается в блин",
+            "Пресет 'Скейт-парк': трамплин + батут"
         ]
         for idx, t in enumerate(tips):
             screen.blit(font_s.render(t, True, (120, 130, 145)), (ui_x, 520 + idx * 16))
